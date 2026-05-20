@@ -1,4 +1,5 @@
 import os
+import pyfiglet
 
 from auth import AuthService
 from models import User, Mission, Role, Simulation, HabitatState, PerformanceEvaluation
@@ -297,8 +298,9 @@ class TerminalInterface:
     def _show_section_header(self, title: str) -> None:
         self._clear_screen()
         print()
-        print(f"{Colors.BOLD}{Colors.BRIGHT_BLUE}{'=' * 60}{Colors.RESET}")
-        print(f"{Colors.BOLD}{Colors.BRIGHT_WHITE}{title.center(60)}{Colors.RESET}")
+        # Generate ASCII art using pyfiglet
+        ascii_art = pyfiglet.figlet_format(title, font="slant")
+        print(f"{Colors.BOLD}{Colors.BRIGHT_BLUE}{ascii_art}{Colors.RESET}")
         print(f"{Colors.BOLD}{Colors.BRIGHT_BLUE}{'=' * 60}{Colors.RESET}")
         print()
 

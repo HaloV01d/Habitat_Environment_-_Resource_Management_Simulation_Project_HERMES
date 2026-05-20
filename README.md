@@ -24,6 +24,12 @@ This increment implements:
 
 Make sure Python is installed.
 
+Install the required dependencies:
+
+```bash
+pip install -r requirements.txt
+```
+
 From the project folder, run:
 
 ```bash
@@ -101,4 +107,4 @@ The product uses salted password hashing through Python standard library tools:
 
 - Python
 - SQLite
-- Python standard library only
+- pyfiglet (for ASCII art menu titles)
