@@ -2,7 +2,7 @@ import os
 import pyfiglet
 
 from auth import AuthService
-from models import User, Mission, Role, Simulation, HabitatState, PerformanceEvaluation
+from models import User, Simulation, HabitatState, PerformanceEvaluation
 from repositories import (
     UserRepository,
     RoleRepository,
@@ -12,12 +12,11 @@ from repositories import (
     PerformanceEvaluationRepository
 )
 
-# ANSI color codes for terminal output
+
 class Colors:
     RESET = "\033[0m"
     BOLD = "\033[1m"
-    
-    # Foreground colors
+
     BLACK = "\033[30m"
     RED = "\033[31m"
     GREEN = "\033[32m"
@@ -26,8 +25,7 @@ class Colors:
     MAGENTA = "\033[35m"
     CYAN = "\033[36m"
     WHITE = "\033[37m"
-    
-    # Bright foreground colors
+
     BRIGHT_BLACK = "\033[90m"
     BRIGHT_RED = "\033[91m"
     BRIGHT_GREEN = "\033[92m"
@@ -47,7 +45,8 @@ class TerminalInterface:
         mission_repository: MissionRepository,
         simulation_repository: SimulationRepository,
         habitat_state_repository: HabitatStateRepository,
-        performance_evaluation_repository: PerformanceEvaluationRepository
+        performance_evaluation_repository: PerformanceEvaluationRepository,
+        simulation_runner
     ):
         self.auth_service = auth_service
         self.user_repository = user_repository
@@ -56,6 +55,7 @@ class TerminalInterface:
         self.simulation_repository = simulation_repository
         self.habitat_state_repository = habitat_state_repository
         self.performance_evaluation_repository = performance_evaluation_repository
+        self.simulation_runner = simulation_runner
 
     def start(self) -> None:
         pending_message = None
@@ -82,6 +82,7 @@ class TerminalInterface:
                 break
             else:
                 self._show_message("Invalid option. Please try again.", "error")
+                self._pause()
 
     def _show_main_menu(self) -> None:
         self._show_section_header("PROJECT HERMES")
@@ -98,7 +99,9 @@ class TerminalInterface:
 
         result = self.auth_service.register(username, password)
         message_type = "success" if result.success else "error"
+
         self._show_message(result.message, message_type)
+        self._pause()
 
     def _login_user(self):
         self._show_section_header("LOG IN")
@@ -108,11 +111,14 @@ class TerminalInterface:
 
         result = self.auth_service.login(username, password)
         message_type = "success" if result.success else "error"
+
         self._show_message(result.message, message_type)
 
         if result.success and result.user is not None:
+            self._pause()
             return self._show_user_menu(result.user)
 
+        self._pause()
         return None
 
     def _show_user_menu(self, user: User):
@@ -144,6 +150,7 @@ class TerminalInterface:
                 return "Logged out successfully."
             else:
                 self._show_message("Invalid option. Please try again.", "error")
+                self._pause()
 
     def _select_mission(self):
         missions = self.mission_repository.get_all_missions()
@@ -152,17 +159,24 @@ class TerminalInterface:
 
         if not missions:
             print(f"{Colors.YELLOW}No missions are currently configured.{Colors.RESET}")
-            self._show_message("Press Enter to continue.", "info")
-            input()
+            self._pause()
             return None
 
         for mission in missions:
-            print(f"{Colors.BRIGHT_MAGENTA}{mission.id}.{Colors.RESET} {Colors.BOLD}{mission.name}{Colors.RESET} {Colors.BRIGHT_BLACK}({mission.duration_days} days){Colors.RESET}")
+            print(
+                f"{Colors.BRIGHT_MAGENTA}{mission.id}.{Colors.RESET} "
+                f"{Colors.BOLD}{mission.name}{Colors.RESET} "
+                f"{Colors.BRIGHT_BLACK}({mission.duration_days} days){Colors.RESET}"
+            )
 
         print()
-        choice = input(f"{Colors.CYAN}Select a mission (or press Enter to cancel): {Colors.RESET}").strip()
+        choice = input(
+            f"{Colors.CYAN}Select a mission (or press Enter to cancel): {Colors.RESET}"
+        ).strip()
 
         if not choice:
+            self._show_message("Mission selection cancelled.", "info")
+            self._pause()
             return None
 
         try:
@@ -170,13 +184,20 @@ class TerminalInterface:
             selected_mission = next((m for m in missions if m.id == mission_id), None)
 
             if selected_mission:
-                self._show_message(f"Mission '{selected_mission.name}' selected.", "success")
+                self._show_message(
+                    f"Mission '{selected_mission.name}' selected.",
+                    "success"
+                )
+                self._pause()
                 return selected_mission
-            else:
-                self._show_message("Invalid mission selection.", "error")
-                return None
+
+            self._show_message("Invalid mission selection.", "error")
+            self._pause()
+            return None
+
         except ValueError:
             self._show_message("Invalid input. Please enter a number.", "error")
+            self._pause()
             return None
 
     def _select_role(self, user: User):
@@ -186,8 +207,7 @@ class TerminalInterface:
 
         if not roles:
             print(f"{Colors.YELLOW}No roles are currently configured.{Colors.RESET}")
-            self._show_message("Press Enter to continue.", "info")
-            input()
+            self._pause()
             return None
 
         for role in roles:
@@ -195,9 +215,13 @@ class TerminalInterface:
             print(f"   {Colors.BRIGHT_BLACK}{role.description}{Colors.RESET}")
             print()
 
-        choice = input(f"{Colors.CYAN}Select a role (or press Enter to cancel): {Colors.RESET}").strip()
+        choice = input(
+            f"{Colors.CYAN}Select a role (or press Enter to cancel): {Colors.RESET}"
+        ).strip()
 
         if not choice:
+            self._show_message("Role selection cancelled.", "info")
+            self._pause()
             return None
 
         try:
@@ -207,54 +231,66 @@ class TerminalInterface:
             if selected_role:
                 self.user_repository.update_user_role(user.id, role_id)
                 user.role_id = role_id
-                self._show_message(f"Role '{selected_role.name}' assigned.", "success")
+
+                self._show_message(
+                    f"Role '{selected_role.name}' assigned.",
+                    "success"
+                )
+                self._pause()
                 return selected_role
-            else:
-                self._show_message("Invalid role selection.", "error")
-                return None
+
+            self._show_message("Invalid role selection.", "error")
+            self._pause()
+            return None
+
         except ValueError:
             self._show_message("Invalid input. Please enter a number.", "error")
+            self._pause()
             return None
 
     def _show_setup_summary(self, user: User, selected_mission, selected_role):
         self._show_section_header("MISSION SETUP SUMMARY")
-        
+
         print(f"{Colors.CYAN}User:{Colors.RESET} {Colors.BOLD}{user.username}{Colors.RESET}")
-        
+
         if selected_mission:
-            print(f"{Colors.CYAN}Mission:{Colors.RESET} {Colors.BOLD}{Colors.GREEN}{selected_mission.name}{Colors.RESET}")
+            print(
+                f"{Colors.CYAN}Mission:{Colors.RESET} "
+                f"{Colors.BOLD}{Colors.GREEN}{selected_mission.name}{Colors.RESET}"
+            )
         else:
             print(f"{Colors.CYAN}Mission:{Colors.RESET} {Colors.YELLOW}Not selected{Colors.RESET}")
-        
+
         if selected_role:
-            print(f"{Colors.CYAN}Role:{Colors.RESET} {Colors.BOLD}{Colors.GREEN}{selected_role.name}{Colors.RESET}")
+            print(
+                f"{Colors.CYAN}Role:{Colors.RESET} "
+                f"{Colors.BOLD}{Colors.GREEN}{selected_role.name}{Colors.RESET}"
+            )
         else:
             print(f"{Colors.CYAN}Role:{Colors.RESET} {Colors.YELLOW}Not selected{Colors.RESET}")
-        
+
         print()
-        
+
         if not selected_mission or not selected_role:
             print(f"{Colors.RED}Setup is incomplete. Please select both a mission and a role.{Colors.RESET}")
         else:
             print(f"{Colors.GREEN}Setup is complete and ready for simulation.{Colors.RESET}")
-        
-        print()
-        self._show_message("Press Enter to continue.", "info")
-        input()
+
+        self._pause()
 
     def _start_simulation(self, user: User, selected_mission, selected_role):
         self._show_section_header("START SIMULATION")
 
-        # Check if setup is complete
         if not selected_mission:
             self._show_message("Cannot start simulation: No mission selected.", "error")
+            self._pause()
             return False
 
         if not selected_role:
             self._show_message("Cannot start simulation: No role selected.", "error")
+            self._pause()
             return False
 
-        # Create simulation record
         simulation = Simulation(
             id=None,
             user_id=user.id,
@@ -262,9 +298,9 @@ class TerminalInterface:
             state="ready",
             progress=0.0
         )
+
         simulation = self.simulation_repository.save(simulation)
 
-        # Create initial habitat state
         habitat_state = HabitatState(
             id=None,
             simulation_id=simulation.id,
@@ -273,14 +309,15 @@ class TerminalInterface:
             integrity=100,
             crew_health=100
         )
+
         self.habitat_state_repository.save(habitat_state)
 
-        # Create initial performance evaluation
         evaluation = PerformanceEvaluation(
             id=None,
             simulation_id=simulation.id,
             score=0
         )
+
         self.performance_evaluation_repository.save(evaluation)
 
         print(f"{Colors.GREEN}Simulation initialized successfully!{Colors.RESET}")
@@ -288,25 +325,56 @@ class TerminalInterface:
         print(f"{Colors.CYAN}Mission:{Colors.RESET} {Colors.BOLD}{selected_mission.name}{Colors.RESET}")
         print(f"{Colors.CYAN}Role:{Colors.RESET} {Colors.BOLD}{selected_role.name}{Colors.RESET}")
         print()
-        print(f"{Colors.YELLOW}Simulation will be fully implemented in Increment 3.{Colors.RESET}")
+        print(f"{Colors.BRIGHT_YELLOW}The mission begins now. Make your decisions carefully.{Colors.RESET}")
         print()
-        self._show_message("Press Enter to continue.", "info")
-        input()
-        
+
+        self._pause("Press Enter to begin the mission...")
+
+        result = self.simulation_runner.run(simulation, selected_role)
+
+        self._show_simulation_result(result)
         return True
+
+    def _show_simulation_result(self, result) -> None:
+        self._show_section_header("MISSION RESULT")
+
+        if "error" in result:
+            self._show_message(result["error"], "error")
+            self._pause()
+            return
+
+        habitat = result["habitat_state"]
+
+        print(f"{Colors.CYAN}Events completed:{Colors.RESET} "
+              f"{result['events_completed']} / {result['total_events']}")
+        print()
+
+        print(f"{Colors.BOLD}Final habitat state:{Colors.RESET}")
+        print(f"  {Colors.CYAN}Energy:{Colors.RESET}      {habitat.energy}")
+        print(f"  {Colors.CYAN}Oxygen:{Colors.RESET}      {habitat.oxygen}")
+        print(f"  {Colors.CYAN}Integrity:{Colors.RESET}   {habitat.integrity}")
+        print(f"  {Colors.CYAN}Crew health:{Colors.RESET} {habitat.crew_health}")
+        print()
+
+        print(f"{Colors.BOLD}{Colors.BRIGHT_GREEN}Performance score: "
+              f"{result['score']}{Colors.RESET}")
+        print(f"{Colors.BOLD}Rating: {result['rating']}{Colors.RESET}")
+
+        self._pause()
 
     def _show_section_header(self, title: str) -> None:
         self._clear_screen()
         print()
-        # Generate ASCII art using pyfiglet
+
         ascii_art = pyfiglet.figlet_format(title, font="slant")
+
         print(f"{Colors.BOLD}{Colors.BRIGHT_BLUE}{ascii_art}{Colors.RESET}")
         print(f"{Colors.BOLD}{Colors.BRIGHT_BLUE}{'=' * 60}{Colors.RESET}")
         print()
 
     def _show_message(self, message: str, message_type: str = "info") -> None:
         print()
-        
+
         if message_type == "success":
             color = Colors.GREEN
             symbol = "✓"
@@ -316,13 +384,17 @@ class TerminalInterface:
         elif message_type == "warning":
             color = Colors.YELLOW
             symbol = "!"
-        else:  # info
+        else:
             color = Colors.CYAN
             symbol = "i"
-        
+
         print(f"{color}{'-' * 60}{Colors.RESET}")
         print(f"{color}{symbol} {message}{Colors.RESET}")
         print(f"{color}{'-' * 60}{Colors.RESET}")
+
+    def _pause(self, message: str = "Press Enter to continue.") -> None:
+        print()
+        input(f"{Colors.BRIGHT_CYAN}{message}{Colors.RESET}")
 
     def _clear_screen(self) -> None:
         os.system("cls" if os.name == "nt" else "clear")

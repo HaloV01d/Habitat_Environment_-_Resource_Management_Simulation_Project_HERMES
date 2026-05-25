@@ -5,10 +5,14 @@ from repositories import (
     MissionRepository,
     SimulationRepository,
     HabitatStateRepository,
-    PerformanceEvaluationRepository
+    PerformanceEvaluationRepository,
+    NarrativeEventRepository,
+    NarrativeOptionRepository
 )
 from auth import AuthService
 from interface import TerminalInterface
+from narrative import NarrativeManager
+from simulation import SimulationRunner
 
 
 def main():
@@ -24,8 +28,23 @@ def main():
         simulation_repository = SimulationRepository(connection)
         habitat_state_repository = HabitatStateRepository(connection)
         performance_evaluation_repository = PerformanceEvaluationRepository(connection)
+        narrative_event_repository = NarrativeEventRepository(connection)
+        narrative_option_repository = NarrativeOptionRepository(connection)
 
         auth_service = AuthService(user_repository)
+
+        narrative_manager = NarrativeManager(
+            event_repository=narrative_event_repository,
+            option_repository=narrative_option_repository
+        )
+
+        simulation_runner = SimulationRunner(
+            narrative_manager=narrative_manager,
+            event_repository=narrative_event_repository,
+            habitat_state_repository=habitat_state_repository,
+            simulation_repository=simulation_repository,
+            performance_evaluation_repository=performance_evaluation_repository
+        )
 
         terminal_interface = TerminalInterface(
             auth_service,
@@ -34,7 +53,8 @@ def main():
             mission_repository,
             simulation_repository,
             habitat_state_repository,
-            performance_evaluation_repository
+            performance_evaluation_repository,
+            simulation_runner
         )
 
         terminal_interface.start()

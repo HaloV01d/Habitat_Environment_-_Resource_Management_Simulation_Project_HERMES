@@ -88,7 +88,6 @@ class UserRepository(IRepository):
         return [self._row_to_user(row) for row in cursor.fetchall()]
 
     def update_user_role(self, user_id: int, role_id: int) -> None:
-        # role selection gets implemented later
         cursor = self.connection.cursor()
 
         cursor.execute("""
@@ -393,9 +392,9 @@ class NarrativeEventRepository(IRepository):
         cursor = self.connection.cursor()
 
         cursor.execute("""
-            INSERT INTO narrative_events (description)
-            VALUES (?);
-        """, (event.description,))
+            INSERT INTO narrative_events (description, role_id)
+            VALUES (?, ?);
+        """, (event.description, event.role_id))
 
         self.connection.commit()
         event.id = cursor.lastrowid
@@ -406,7 +405,7 @@ class NarrativeEventRepository(IRepository):
         cursor = self.connection.cursor()
 
         cursor.execute("""
-            SELECT id, description
+            SELECT id, description, role_id
             FROM narrative_events
             WHERE id = ?;
         """, (event_id,))
@@ -417,10 +416,24 @@ class NarrativeEventRepository(IRepository):
         cursor = self.connection.cursor()
 
         cursor.execute("""
-            SELECT id, description
+            SELECT id, description, role_id
             FROM narrative_events
             ORDER BY id;
         """)
+
+        return [self._row_to_event(row) for row in cursor.fetchall()]
+
+    def get_for_role(self, role_id: int) -> List[NarrativeEvent]:
+        # shared events use role_id NULL
+        # role-specific events use the selected role id
+        cursor = self.connection.cursor()
+
+        cursor.execute("""
+            SELECT id, description, role_id
+            FROM narrative_events
+            WHERE role_id IS NULL OR role_id = ?
+            ORDER BY id;
+        """, (role_id,))
 
         return [self._row_to_event(row) for row in cursor.fetchall()]
 
@@ -430,7 +443,8 @@ class NarrativeEventRepository(IRepository):
 
         return NarrativeEvent(
             id=row["id"],
-            description=row["description"]
+            description=row["description"],
+            role_id=row["role_id"]
         )
 
 

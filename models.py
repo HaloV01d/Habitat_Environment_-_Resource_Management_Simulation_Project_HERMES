@@ -3,7 +3,7 @@ from typing import Optional, List
 
 
 # core data classes for Project HERMES
-# most logic is handled by services and repositories
+# most logic is handled by services, repositories, and managers
 
 
 @dataclass
@@ -22,7 +22,7 @@ class Role:
     description: str
 
     def get_tasks(self) -> List[str]:
-        # role-specific tasks are for a later increment
+        # role-specific tasks are handled through narrative events
         return []
 
 
@@ -87,6 +87,7 @@ class HabitatState:
 class NarrativeEvent:
     id: Optional[int]
     description: str
+    role_id: Optional[int] = None
 
     def present(self) -> str:
         return self.description
@@ -104,7 +105,7 @@ class NarrativeOption:
     score_impact: float = 0.0
 
     def apply(self, habitat_state: HabitatState) -> HabitatState:
-        # impact parsing gets implemented with the narrative increment
+        # actual impact handling is done by NarrativeManager
         return habitat_state
 
 
