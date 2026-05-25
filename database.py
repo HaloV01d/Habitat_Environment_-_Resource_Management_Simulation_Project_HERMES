@@ -21,7 +21,7 @@ def initialize_database():
 
     try:
         create_tables(connection)
-        ensure_increment_3_schema(connection)
+        ensure_database_schema(connection)
         seed_initial_data(connection)
         connection.commit()
     except sqlite3.Error as error:
@@ -67,6 +67,7 @@ def create_tables(connection):
             mission_id INTEGER NOT NULL,
             state TEXT NOT NULL,
             progress REAL NOT NULL DEFAULT 0,
+            current_event_index INTEGER NOT NULL DEFAULT 0,
             FOREIGN KEY (user_id) REFERENCES users(id),
             FOREIGN KEY (mission_id) REFERENCES missions(id)
         );
@@ -117,12 +118,18 @@ def create_tables(connection):
     """)
 
 
-def ensure_increment_3_schema(connection):
-    # older databases may have narrative_events without role_id
+def ensure_database_schema(connection):
+    # older databases may be missing Increment 3 columns
     if not column_exists(connection, "narrative_events", "role_id"):
         connection.execute("""
             ALTER TABLE narrative_events
             ADD COLUMN role_id INTEGER;
+        """)
+
+    if not column_exists(connection, "simulations", "current_event_index"):
+        connection.execute("""
+            ALTER TABLE simulations
+            ADD COLUMN current_event_index INTEGER NOT NULL DEFAULT 0;
         """)
 
 
@@ -188,7 +195,6 @@ def seed_narrative_events(connection):
         return
 
     role_ids = get_role_ids_by_name(connection)
-
     events = build_narrative_seed_data(role_ids)
 
     for event in events:
@@ -236,7 +242,6 @@ def get_role_ids_by_name(connection) -> dict:
 
 def build_narrative_seed_data(role_ids: dict) -> list:
     return [
-        # shared events, every role gets these
         {
             "description": "The habitat oxygen system reports unstable pressure levels.",
             "role_id": None,
@@ -328,7 +333,6 @@ def build_narrative_seed_data(role_ids: dict) -> list:
             ]
         },
 
-        # Habitat Engineer
         {
             "description": "A micrometeorite has punctured the habitat outer wall.",
             "role_id": role_ids["Habitat Engineer"],
@@ -420,7 +424,6 @@ def build_narrative_seed_data(role_ids: dict) -> list:
             ]
         },
 
-        # Planetary Scientist
         {
             "description": "A promising sample collection site has been detected inside a crater.",
             "role_id": role_ids["Planetary Scientist"],
@@ -512,7 +515,6 @@ def build_narrative_seed_data(role_ids: dict) -> list:
             ]
         },
 
-        # Medical Officer
         {
             "description": "A crew member is showing symptoms of severe fatigue.",
             "role_id": role_ids["Medical Officer"],
@@ -604,7 +606,6 @@ def build_narrative_seed_data(role_ids: dict) -> list:
             ]
         },
 
-        # Systems Engineer
         {
             "description": "Solar panel efficiency has dropped significantly.",
             "role_id": role_ids["Systems Engineer"],

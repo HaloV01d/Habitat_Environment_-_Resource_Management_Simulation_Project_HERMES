@@ -279,6 +279,102 @@ class TerminalInterface:
         self._pause()
 
     def _start_simulation(self, user: User, selected_mission, selected_role):
+        paused_simulation = self.simulation_repository.get_latest_paused_by_user(
+            user.id
+        )
+
+        if paused_simulation is not None:
+            resume_choice = self._show_saved_simulation_prompt(user, paused_simulation)
+
+            if resume_choice == "resume":
+                return self._resume_simulation(user, paused_simulation)
+
+            if resume_choice == "cancel":
+                return False
+
+        return self._start_new_simulation(user, selected_mission, selected_role)
+
+    def _show_saved_simulation_prompt(
+        self,
+        user: User,
+        paused_simulation: Simulation
+    ) -> str:
+        mission = self.mission_repository.get(paused_simulation.mission_id)
+        role = self.role_repository.get(user.role_id) if user.role_id else None
+
+        while True:
+            self._show_section_header("SAVED SIMULATION")
+
+            print(f"{Colors.BRIGHT_YELLOW}A saved simulation was found.{Colors.RESET}")
+            print()
+
+            print(f"{Colors.CYAN}User:{Colors.RESET} {Colors.BOLD}{user.username}{Colors.RESET}")
+
+            if mission:
+                print(f"{Colors.CYAN}Mission:{Colors.RESET} {Colors.BOLD}{mission.name}{Colors.RESET}")
+            else:
+                print(f"{Colors.CYAN}Mission:{Colors.RESET} {Colors.RED}Unknown{Colors.RESET}")
+
+            if role:
+                print(f"{Colors.CYAN}Role:{Colors.RESET} {Colors.BOLD}{role.name}{Colors.RESET}")
+            else:
+                print(f"{Colors.CYAN}Role:{Colors.RESET} {Colors.RED}Unknown{Colors.RESET}")
+
+            print(f"{Colors.CYAN}Progress:{Colors.RESET} {paused_simulation.progress}%")
+            print(f"{Colors.CYAN}Completed events:{Colors.RESET} {paused_simulation.current_event_index}")
+            print()
+
+            print(f"{Colors.BRIGHT_GREEN}1.{Colors.RESET} Resume saved simulation")
+            print(f"{Colors.BRIGHT_YELLOW}2.{Colors.RESET} Start new simulation")
+            print(f"{Colors.BRIGHT_RED}3.{Colors.RESET} Cancel")
+            print()
+
+            choice = input(f"{Colors.BRIGHT_CYAN}Select an option: {Colors.RESET}").strip()
+
+            if choice == "1":
+                return "resume"
+
+            if choice == "2":
+                return "new"
+
+            if choice == "3":
+                return "cancel"
+
+            self._show_message("Invalid option. Please try again.", "error")
+            self._pause()
+
+    def _resume_simulation(self, user: User, paused_simulation: Simulation):
+        self._show_section_header("RESUME SIMULATION")
+
+        mission = self.mission_repository.get(paused_simulation.mission_id)
+        role = self.role_repository.get(user.role_id) if user.role_id else None
+
+        if mission is None:
+            self._show_message("Cannot resume simulation: mission was not found.", "error")
+            self._pause()
+            return False
+
+        if role is None:
+            self._show_message("Cannot resume simulation: role was not found.", "error")
+            self._pause()
+            return False
+
+        print(f"{Colors.GREEN}Ready to resume saved simulation.{Colors.RESET}")
+        print()
+        print(f"{Colors.CYAN}Mission:{Colors.RESET} {Colors.BOLD}{mission.name}{Colors.RESET}")
+        print(f"{Colors.CYAN}Role:{Colors.RESET} {Colors.BOLD}{role.name}{Colors.RESET}")
+        print(f"{Colors.CYAN}Progress:{Colors.RESET} {paused_simulation.progress}%")
+        print(f"{Colors.CYAN}Completed events:{Colors.RESET} {paused_simulation.current_event_index}")
+        print()
+
+        self._pause("Press Enter to resume the mission...")
+
+        result = self.simulation_runner.run(paused_simulation, role)
+
+        self._show_simulation_result(result)
+        return True
+
+    def _start_new_simulation(self, user: User, selected_mission, selected_role):
         self._show_section_header("START SIMULATION")
 
         if not selected_mission:
@@ -296,7 +392,8 @@ class TerminalInterface:
             user_id=user.id,
             mission_id=selected_mission.id,
             state="ready",
-            progress=0.0
+            progress=0.0,
+            current_event_index=0
         )
 
         simulation = self.simulation_repository.save(simulation)
@@ -336,13 +433,49 @@ class TerminalInterface:
         return True
 
     def _show_simulation_result(self, result) -> None:
+        status = result.get("status", "finished")
+
+        if status == "saved":
+            self._show_section_header("SIMULATION SAVED")
+            self._show_message(result["message"], "success")
+            self._show_partial_result(result)
+            self._pause()
+            return
+
+        if status == "cancelled":
+            self._show_section_header("SIMULATION EXITED")
+            self._show_message(result["message"], "warning")
+            self._show_partial_result(result)
+            self._pause()
+            return
+
         self._show_section_header("MISSION RESULT")
 
-        if "error" in result:
+        if status == "error" or "error" in result:
             self._show_message(result["error"], "error")
             self._pause()
             return
 
+        self._show_full_result(result)
+        self._pause()
+
+    def _show_partial_result(self, result) -> None:
+        habitat = result["habitat_state"]
+
+        print()
+        print(f"{Colors.CYAN}Events completed:{Colors.RESET} "
+              f"{result['events_completed']} / {result['total_events']}")
+        print(f"{Colors.CYAN}Current score:{Colors.RESET} {result['score']}")
+        print(f"{Colors.CYAN}Current rating:{Colors.RESET} {result['rating']}")
+        print()
+
+        print(f"{Colors.BOLD}Current habitat state:{Colors.RESET}")
+        print(f"  {Colors.CYAN}Energy:{Colors.RESET}      {habitat.energy}")
+        print(f"  {Colors.CYAN}Oxygen:{Colors.RESET}      {habitat.oxygen}")
+        print(f"  {Colors.CYAN}Integrity:{Colors.RESET}   {habitat.integrity}")
+        print(f"  {Colors.CYAN}Crew health:{Colors.RESET} {habitat.crew_health}")
+
+    def _show_full_result(self, result) -> None:
         habitat = result["habitat_state"]
 
         print(f"{Colors.CYAN}Events completed:{Colors.RESET} "
@@ -359,8 +492,6 @@ class TerminalInterface:
         print(f"{Colors.BOLD}{Colors.BRIGHT_GREEN}Performance score: "
               f"{result['score']}{Colors.RESET}")
         print(f"{Colors.BOLD}Rating: {result['rating']}{Colors.RESET}")
-
-        self._pause()
 
     def _show_section_header(self, title: str) -> None:
         self._clear_screen()

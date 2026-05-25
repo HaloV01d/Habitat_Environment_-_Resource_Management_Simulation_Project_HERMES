@@ -8,6 +8,7 @@ STATE_NOT_STARTED = "not_started"
 STATE_RUNNING = "running"
 STATE_PAUSED = "paused"
 STATE_FINISHED = "finished"
+STATE_CANCELLED = "cancelled"
 
 DEFAULT_PROGRESS = 0.0
 
@@ -83,13 +84,14 @@ class AresPathfinderSimulator:
         )
 
     def create_simulation_draft(self, user_id: int, mission_id: int) -> Simulation:
-        # creates the object only, saving it happens through the repository
+        # creates the object only, saving happens through the repository
         return Simulation(
             id=None,
             user_id=user_id,
             mission_id=mission_id,
             state=STATE_NOT_STARTED,
-            progress=DEFAULT_PROGRESS
+            progress=DEFAULT_PROGRESS,
+            current_event_index=0
         )
 
     def create_default_habitat_state(
@@ -143,44 +145,92 @@ class SimulationRunner:
         habitat_state = self.habitat_state_repository.get_by_simulation(simulation.id)
 
         if habitat_state is None:
-            return {"error": "Habitat state was not found."}
+            return {"status": "error", "error": "Habitat state was not found."}
 
         evaluation = self.performance_evaluation_repository.get_by_simulation(
             simulation.id
         )
 
         if evaluation is None:
-            return {"error": "Performance evaluation was not found."}
+            return {"status": "error", "error": "Performance evaluation was not found."}
 
         events = self.event_repository.get_for_role(role.id)
 
         if not events:
-            return {"error": "No narrative events are configured for this role."}
+            return {"status": "error", "error": "No narrative events are configured for this role."}
 
-        simulation.execute()
-        self.simulation_repository.update_progress(
-            simulation.id,
-            simulation.state,
-            simulation.progress
-        )
-
-        total_score = 0.0
-        events_completed = 0
-        total_events = len(events)
-
-        self._show_intro(role, total_events)
-
-        for index, event in enumerate(events, start=1):
-            chosen_option = self._play_event(
-                event,
-                index,
-                total_events,
+        if simulation.current_event_index >= len(events):
+            return self._build_finished_result(
+                evaluation.score,
+                len(events),
+                len(events),
                 habitat_state
             )
 
-            if chosen_option is None:
-                continue
+        simulation.resume()
+        self.simulation_repository.update_progress(
+            simulation.id,
+            simulation.state,
+            simulation.progress,
+            simulation.current_event_index
+        )
 
+        total_score = evaluation.score
+        total_events = len(events)
+
+        self._show_intro(simulation, role, total_events)
+
+        for event_index in range(simulation.current_event_index, total_events):
+            event = events[event_index]
+
+            event_result = self._play_event(
+                event,
+                event_index + 1,
+                total_events,
+                habitat_state,
+                simulation.progress,
+                total_score
+            )
+
+            if event_result["action"] == "save":
+                simulation.pause()
+                self.simulation_repository.update_progress(
+                    simulation.id,
+                    simulation.state,
+                    simulation.progress,
+                    simulation.current_event_index
+                )
+
+                return {
+                    "status": "saved",
+                    "message": "Progress saved. You can resume this simulation later.",
+                    "events_completed": simulation.current_event_index,
+                    "total_events": total_events,
+                    "habitat_state": habitat_state,
+                    "score": total_score,
+                    "rating": self._rating_for(total_score)
+                }
+
+            if event_result["action"] == "exit":
+                simulation.state = STATE_CANCELLED
+                self.simulation_repository.update_progress(
+                    simulation.id,
+                    simulation.state,
+                    simulation.progress,
+                    simulation.current_event_index
+                )
+
+                return {
+                    "status": "cancelled",
+                    "message": "Simulation exited without saving a resume point.",
+                    "events_completed": simulation.current_event_index,
+                    "total_events": total_events,
+                    "habitat_state": habitat_state,
+                    "score": total_score,
+                    "rating": self._rating_for(total_score)
+                }
+
+            chosen_option = event_result["option"]
             previous_state = self._copy_habitat_state(habitat_state)
 
             habitat_state = self.narrative_manager.apply_option(
@@ -191,17 +241,23 @@ class SimulationRunner:
             self.habitat_state_repository.update_state(habitat_state)
 
             total_score += chosen_option.score_impact
-            events_completed += 1
+            evaluation.update(total_score)
+            self.performance_evaluation_repository.update_score(
+                evaluation.id,
+                evaluation.score
+            )
 
+            simulation.current_event_index = event_index + 1
             simulation.progress = round(
-                (events_completed / total_events) * 100.0,
+                (simulation.current_event_index / total_events) * 100.0,
                 1
             )
 
             self.simulation_repository.update_progress(
                 simulation.id,
                 simulation.state,
-                simulation.progress
+                simulation.progress,
+                simulation.current_event_index
             )
 
             self._show_decision_result(
@@ -213,52 +269,49 @@ class SimulationRunner:
             )
 
         simulation.finish()
+        simulation.current_event_index = total_events
 
         self.simulation_repository.update_progress(
             simulation.id,
             simulation.state,
-            simulation.progress
+            simulation.progress,
+            simulation.current_event_index
         )
 
-        evaluation.update(total_score)
-
-        self.performance_evaluation_repository.update_score(
-            evaluation.id,
-            evaluation.score
+        return self._build_finished_result(
+            evaluation.generate_result(),
+            simulation.current_event_index,
+            total_events,
+            habitat_state
         )
-
-        return {
-            "score": evaluation.generate_result(),
-            "events_completed": events_completed,
-            "total_events": total_events,
-            "habitat_state": habitat_state,
-            "rating": self._rating_for(total_score),
-        }
 
     def _play_event(
         self,
         event,
-        index: int,
+        event_number: int,
         total_events: int,
-        habitat_state: HabitatState
-    ):
+        habitat_state: HabitatState,
+        progress: float,
+        current_score: float
+    ) -> dict:
         loaded_event, options = self.narrative_manager.get_event_with_options(
             event.id
         )
 
         if loaded_event is None or not options:
-            return None
+            return {"action": "skip", "option": None}
 
         while True:
             self._clear_screen()
-            self._show_event_header(index, total_events)
-            self._show_habitat_state(habitat_state)
+            self._show_event_header(event_number, total_events)
+            self._show_habitat_state(habitat_state, progress, current_score)
 
             print(f"{Colors.BOLD}{Colors.BRIGHT_WHITE}Mission Situation:{Colors.RESET}")
-            print(f"{loaded_event.description}")
+            print(loaded_event.description)
             print()
 
             print(f"{Colors.BOLD}{Colors.BRIGHT_WHITE}Available Actions:{Colors.RESET}")
+            print(f"{Colors.BRIGHT_YELLOW}0.{Colors.RESET} Pause simulation")
 
             for option_index, option in enumerate(options, start=1):
                 print(
@@ -271,34 +324,77 @@ class SimulationRunner:
                 f"{Colors.BRIGHT_CYAN}Select an action: {Colors.RESET}"
             ).strip()
 
+            if choice == "0":
+                pause_result = self._show_pause_menu()
+
+                if pause_result == "resume":
+                    continue
+
+                if pause_result == "save":
+                    return {"action": "save", "option": None}
+
+                if pause_result == "exit":
+                    return {"action": "exit", "option": None}
+
             chosen_option = self.narrative_manager.validate_option_choice(
                 choice,
                 options
             )
 
             if chosen_option is not None:
-                return chosen_option
+                return {"action": "choice", "option": chosen_option}
 
             self._show_message("Invalid option. Please try again.", "error")
             input(f"{Colors.BRIGHT_CYAN}Press Enter to continue...{Colors.RESET}")
 
-    def _show_intro(self, role: Role, total_events: int) -> None:
+    def _show_pause_menu(self) -> str:
+        while True:
+            self._clear_screen()
+            self._show_title("SIMULATION PAUSED")
+
+            print(f"{Colors.BRIGHT_GREEN}1.{Colors.RESET} Resume simulation")
+            print(f"{Colors.BRIGHT_YELLOW}2.{Colors.RESET} Save progress and return to user menu")
+            print(f"{Colors.BRIGHT_RED}3.{Colors.RESET} Exit to user menu without saving a resume point")
+            print()
+
+            choice = input(
+                f"{Colors.BRIGHT_CYAN}Select an option: {Colors.RESET}"
+            ).strip()
+
+            if choice == "1":
+                return "resume"
+
+            if choice == "2":
+                return "save"
+
+            if choice == "3":
+                return "exit"
+
+            self._show_message("Invalid option. Please try again.", "error")
+            input(f"{Colors.BRIGHT_CYAN}Press Enter to continue...{Colors.RESET}")
+
+    def _show_intro(self, simulation: Simulation, role: Role, total_events: int) -> None:
         self._clear_screen()
         self._show_title("MISSION START")
+
+        if simulation.current_event_index > 0:
+            print(f"{Colors.BRIGHT_YELLOW}Resuming saved simulation.{Colors.RESET}")
+            print()
+
         print(f"{Colors.CYAN}Role:{Colors.RESET} {Colors.BOLD}{role.name}{Colors.RESET}")
-        print(f"{Colors.CYAN}Events:{Colors.RESET} {total_events}")
+        print(f"{Colors.CYAN}Events completed:{Colors.RESET} {simulation.current_event_index} / {total_events}")
+        print(f"{Colors.CYAN}Progress:{Colors.RESET} {simulation.progress}%")
         print()
         print(
             f"{Colors.BRIGHT_YELLOW}"
-            "The simulation is starting. Each decision will affect habitat status "
-            "and final performance."
+            "Each decision will affect habitat status and final performance."
             f"{Colors.RESET}"
         )
         print()
         input(f"{Colors.BRIGHT_CYAN}Press Enter to continue...{Colors.RESET}")
 
-    def _show_event_header(self, index: int, total_events: int) -> None:
-        self._show_title(f"EVENT {index} OF {total_events}")
+    def _show_event_header(self, event_number: int, total_events: int) -> None:
+        self._show_title(f"EVENT {event_number} OF {total_events}")
 
     def _show_decision_result(
         self,
@@ -332,12 +428,20 @@ class SimulationRunner:
 
         input(f"{Colors.BRIGHT_CYAN}Press Enter to continue...{Colors.RESET}")
 
-    def _show_habitat_state(self, habitat_state: HabitatState) -> None:
+    def _show_habitat_state(
+        self,
+        habitat_state: HabitatState,
+        progress: float,
+        current_score: float
+    ) -> None:
         print(f"{Colors.BOLD}{Colors.BRIGHT_WHITE}Current Habitat State:{Colors.RESET}")
         print(f"  {Colors.CYAN}Energy:{Colors.RESET}      {habitat_state.energy}")
         print(f"  {Colors.CYAN}Oxygen:{Colors.RESET}      {habitat_state.oxygen}")
         print(f"  {Colors.CYAN}Integrity:{Colors.RESET}   {habitat_state.integrity}")
         print(f"  {Colors.CYAN}Crew health:{Colors.RESET} {habitat_state.crew_health}")
+        print()
+        print(f"{Colors.CYAN}Current score:{Colors.RESET} {current_score}")
+        print(f"{Colors.CYAN}Progress:{Colors.RESET} {progress}%")
         print()
 
     def _print_change(self, label: str, old_value: int, new_value: int) -> None:
@@ -355,6 +459,22 @@ class SimulationRunner:
             f"{old_value} -> {new_value} "
             f"{color}({self._format_signed_number(change)}){Colors.RESET}"
         )
+
+    def _build_finished_result(
+        self,
+        score: float,
+        events_completed: int,
+        total_events: int,
+        habitat_state: HabitatState
+    ) -> dict:
+        return {
+            "status": "finished",
+            "score": score,
+            "events_completed": events_completed,
+            "total_events": total_events,
+            "habitat_state": habitat_state,
+            "rating": self._rating_for(score)
+        }
 
     def _show_title(self, title: str) -> None:
         print()

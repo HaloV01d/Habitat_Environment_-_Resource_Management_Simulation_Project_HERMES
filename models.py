@@ -46,6 +46,7 @@ class Simulation:
     mission_id: int
     state: str
     progress: float
+    current_event_index: int = 0
 
     def execute(self) -> None:
         self.state = "running"

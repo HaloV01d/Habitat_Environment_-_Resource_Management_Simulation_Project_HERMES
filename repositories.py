@@ -241,13 +241,20 @@ class SimulationRepository(IRepository):
         cursor = self.connection.cursor()
 
         cursor.execute("""
-            INSERT INTO simulations (user_id, mission_id, state, progress)
-            VALUES (?, ?, ?, ?);
+            INSERT INTO simulations (
+                user_id,
+                mission_id,
+                state,
+                progress,
+                current_event_index
+            )
+            VALUES (?, ?, ?, ?, ?);
         """, (
             simulation.user_id,
             simulation.mission_id,
             simulation.state,
-            simulation.progress
+            simulation.progress,
+            simulation.current_event_index
         ))
 
         self.connection.commit()
@@ -259,7 +266,13 @@ class SimulationRepository(IRepository):
         cursor = self.connection.cursor()
 
         cursor.execute("""
-            SELECT id, user_id, mission_id, state, progress
+            SELECT
+                id,
+                user_id,
+                mission_id,
+                state,
+                progress,
+                current_event_index
             FROM simulations
             WHERE id = ?;
         """, (simulation_id,))
@@ -270,7 +283,13 @@ class SimulationRepository(IRepository):
         cursor = self.connection.cursor()
 
         cursor.execute("""
-            SELECT id, user_id, mission_id, state, progress
+            SELECT
+                id,
+                user_id,
+                mission_id,
+                state,
+                progress,
+                current_event_index
             FROM simulations
             WHERE user_id = ?
             ORDER BY id;
@@ -278,16 +297,94 @@ class SimulationRepository(IRepository):
 
         return [self._row_to_simulation(row) for row in cursor.fetchall()]
 
-    def update_progress(self, simulation_id: int, state: str, progress: float) -> None:
+    def get_latest_paused_by_user(self, user_id: int) -> Optional[Simulation]:
+        cursor = self.connection.cursor()
+
+        cursor.execute("""
+            SELECT
+                id,
+                user_id,
+                mission_id,
+                state,
+                progress,
+                current_event_index
+            FROM simulations
+            WHERE user_id = ?
+              AND state = 'paused'
+            ORDER BY id DESC
+            LIMIT 1;
+        """, (user_id,))
+
+        return self._row_to_simulation(cursor.fetchone())
+
+    def update_progress(
+        self,
+        simulation_id: int,
+        state: str,
+        progress: float,
+        current_event_index: Optional[int] = None
+    ) -> None:
+        cursor = self.connection.cursor()
+
+        if current_event_index is None:
+            cursor.execute("""
+                UPDATE simulations
+                SET state = ?, progress = ?
+                WHERE id = ?;
+            """, (state, progress, simulation_id))
+        else:
+            cursor.execute("""
+                UPDATE simulations
+                SET state = ?, progress = ?, current_event_index = ?
+                WHERE id = ?;
+            """, (state, progress, current_event_index, simulation_id))
+
+        self.connection.commit()
+
+    def update_current_event_index(
+        self,
+        simulation_id: int,
+        current_event_index: int
+    ) -> None:
         cursor = self.connection.cursor()
 
         cursor.execute("""
             UPDATE simulations
-            SET state = ?, progress = ?
+            SET current_event_index = ?
             WHERE id = ?;
-        """, (state, progress, simulation_id))
+        """, (current_event_index, simulation_id))
 
         self.connection.commit()
+
+    def mark_paused(self, simulation: Simulation) -> None:
+        simulation.pause()
+
+        self.update_progress(
+            simulation.id,
+            simulation.state,
+            simulation.progress,
+            simulation.current_event_index
+        )
+
+    def mark_running(self, simulation: Simulation) -> None:
+        simulation.resume()
+
+        self.update_progress(
+            simulation.id,
+            simulation.state,
+            simulation.progress,
+            simulation.current_event_index
+        )
+
+    def mark_finished(self, simulation: Simulation) -> None:
+        simulation.finish()
+
+        self.update_progress(
+            simulation.id,
+            simulation.state,
+            simulation.progress,
+            simulation.current_event_index
+        )
 
     def _row_to_simulation(self, row) -> Optional[Simulation]:
         if row is None:
@@ -298,7 +395,8 @@ class SimulationRepository(IRepository):
             user_id=row["user_id"],
             mission_id=row["mission_id"],
             state=row["state"],
-            progress=row["progress"]
+            progress=row["progress"],
+            current_event_index=row["current_event_index"]
         )
 
 
